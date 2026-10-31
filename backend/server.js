@@ -4,6 +4,7 @@ const mongoose = require("mongoose");
 
 const userRoute = require("./routes/userRoutes");
 const bookingRoute = require("./routes/bookingRoutes");
+const authRoute = require("./routes/authRoutes");
 
 const PORT = process.env.PORT;
 const Db = process.env.MONGOOSE_URI;
@@ -19,6 +20,7 @@ app.use((req, res, next) => {
 
 app.use("/user", userRoute);
 app.use("/booking", bookingRoute);
+app.use("/auth", authRoute);
 
 mongoose
   .connect(Db)
