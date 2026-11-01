@@ -1,9 +1,45 @@
 const bcrypt = require("bcrypt");
 const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 
 const User = require("../models/userSchema");
 const RefreshToken = require("../models/refreshTokenSchema");
+
+const hashRefresh = (token) => {
+  return crypto.createHash("sha256").update(token).digest("hex");
+};
+
+const issueTokens = async (res, userId) => {
+  const accessToken = jwt.sign({ sub: userId }, process.env.ACCESS_TOKEN, {
+    expiresIn: "15m",
+  });
+
+  const refreshToken = jwt.sign({ sub: userId }, process.env.REFRESH_TOKEN, {
+    expiresIn: "7d",
+  });
+
+  await RefreshToken.create({
+    user: userId,
+    hashedToken: hashRefresh(refreshToken),
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+  });
+
+  res.cookie("accessToken", accessToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 15 * 60 * 1000,
+  });
+
+  res.cookie("refreshToken", refreshToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/auth/refresh",
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  });
+};
 
 const register = async (req, res) => {
   const { name, email, password, phone } = req.body;
@@ -22,34 +58,61 @@ const register = async (req, res) => {
 const login = async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
-    return res.status(400).json({ error: "Enter both email and password" });
+    return res.status(400).json({ error: "Missing email or password" });
   }
   try {
     const user = await User.findOne({ email });
-    const hashed = await bcrypt.compare(password, user.password);
-    if (!user || !hashed) {
+    const match = user && (await bcrypt.compare(password, user.password));
+    if (!match) {
       return res.status(400).json({ error: "Invalid email or password" });
     }
-
-    const accessToken = jwt.sign({ sub: user._id }, process.env.ACCESS_TOKEN, {
-      expiresIn: "15m",
-    });
-
-    const refreshToken = jwt.sign(
-      { sub: user._id },
-      process.env.REFRESH_TOKEN,
-      { expiresAt: "7d" },
-    );
-
-    res.cookie("accessToken", accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 15 * 60 * 1000,
-    });
+    await issueTokens(res, user._id);
+    res.status(200).json({ id: user._id, email: user.email });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-module.exports = { register, login };
+const refresh = async (req, res) => {
+  const token = req.cookies.refreshToken;
+
+  if (!token) {
+    return res.status(401).json({ error: "Not authenticated" });
+  }
+  try {
+    const payload = jwt.verify(token, process.env.REFRESH_TOKEN);
+    const stored = await RefreshToken.findOneAndDelete({
+      hashedToken: hashRefresh(token),
+    });
+    if (!stored) {
+      return res.status(401).json({ error: "Invalid refresh token" });
+    }
+    await issueTokens(res, payload.sub);
+    res.status(200).json({ message: "Refreshed" });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+const logout = async (req, res) => {
+  try {
+    res.clearCookie("accessToken", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+    });
+
+    res.clearCookie("refreshToken", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/auth/refresh",
+    });
+
+    res.status(200).json({ message: "Logged out successfully!" });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+module.exports = { register, login, logout, refresh };
