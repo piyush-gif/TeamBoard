@@ -39,11 +39,32 @@ const updateUser = async (req, res) => {
     if (!user) {
       return res.status(404).json({ error: "No user with that Id" });
     }
-    const newUser = await User.create({ ...user, data });
+    const newUser = await User.findByIdAndUpdate(
+      id,
+      { ...req.body },
+      { returnDocument: "after", runValidators: true, select: "-password" },
+    );
+
+    if (!user) {
+      return res.status(404).json({ error: "No user with that Id" });
+    }
     res.status(200).json(newUser);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-module.exports = { getUser, getAllUsers, updateUser };
+const deleteUser = async (req, res) => {
+  const { id } = req.params;
+  if (!id) {
+    return res.status(400).json({ error: "Invalid Id" });
+  }
+  try {
+    const user = await User.findByIdAndDelete(id);
+    res.status(200).json(user);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+module.exports = { getUser, getAllUsers, updateUser, deleteUser };
